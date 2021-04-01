@@ -1,20 +1,62 @@
-class EmbedController < ApplicationController
-  skip_before_filter :check_xhr, :preload_json, :verify_authenticity_token
+# frozen_string_literal: true
 
-  before_filter :ensure_embeddable, except: [ :info ]
-  before_filter :get_embeddable_css_class, except: [ :info ]
-  before_filter :ensure_api_request, only: [ :info ]
+class EmbedController < ApplicationController
+  include TopicQueryParams
+
+  skip_before_action :check_xhr, :preload_json, :verify_authenticity_token
+
+  before_action :ensure_embeddable, except: [ :info, :topics ]
+  before_action :prepare_embeddable, except: [ :info ]
+  before_action :ensure_api_request, only: [ :info ]
 
   layout 'embed'
 
   rescue_from Discourse::InvalidAccess do
-    response.headers['X-Frame-Options'] = "ALLOWALL"
+    response.headers.delete('X-Frame-Options')
     if current_user.try(:admin?)
       @setup_url = "#{Discourse.base_url}/admin/customize/embedding"
       @show_reason = true
       @hosts = EmbeddableHost.all
     end
-    render 'embed_error'
+    render 'embed_error', status: 400
+  end
+
+  def topics
+    discourse_expires_in 1.minute
+
+    response.headers.delete('X-Frame-Options')
+    unless SiteSetting.embed_topics_list?
+      render 'embed_topics_error', status: 400
+      return
+    end
+
+    if @embed_id = params[:discourse_embed_id]
+      raise Discourse::InvalidParameters.new(:embed_id) unless @embed_id =~ /^de\-[a-zA-Z0-9]+$/
+    end
+
+    if params.has_key?(:template) && params[:template] == "complete"
+      @template = "complete"
+    else
+      @template = "basic"
+    end
+
+    list_options = build_topic_list_options
+
+    if params.has_key?(:per_page)
+      list_options[:per_page] =
+        [params[:per_page].to_i, SiteSetting.embed_topic_limit_per_page].min
+    end
+
+    if params[:allow_create]
+      @allow_create = true
+      create_url_params = {}
+      create_url_params[:category_id] = params[:category] if params[:category].present?
+      create_url_params[:tags] = params[:tags] if params[:tags].present?
+      @create_url = "#{Discourse.base_url}/new-topic?#{create_url_params.to_query}"
+    end
+
+    topic_query = TopicQuery.new(current_user, list_options)
+    @list = topic_query.list_latest
   end
 
   def comments
@@ -32,6 +74,7 @@ class EmbedController < ApplicationController
       @topic_view = TopicView.new(topic_id,
                                   current_user,
                                   limit: SiteSetting.embed_post_limit,
+                                  only_regular: true,
                                   exclude_first: true,
                                   exclude_deleted_users: true,
                                   exclude_hidden: true)
@@ -46,7 +89,6 @@ class EmbedController < ApplicationController
         @reply_count = @topic_view.topic.posts_count - 1
         @reply_count = 0 if @reply_count < 0
       end
-
     elsif embed_url.present?
       Jobs.enqueue(:retrieve_topic,
                       user_id: current_user.try(:id),
@@ -74,7 +116,7 @@ class EmbedController < ApplicationController
     by_url = {}
 
     if embed_urls.present?
-      urls = embed_urls.map {|u| u.sub(/#discourse-comments$/, '').sub(/\/$/, '') }
+      urls = embed_urls.map { |u| u.sub(/#discourse-comments$/, '').sub(/\/$/, '') }
       topic_embeds = TopicEmbed.where(embed_url: urls).includes(:topic).references(:topic)
 
       topic_embeds.each do |te|
@@ -88,31 +130,36 @@ class EmbedController < ApplicationController
       end
     end
 
-    render json: {counts: by_url}, callback: params[:callback]
+    render json: { counts: by_url }, callback: params[:callback]
   end
 
   private
 
-    def get_embeddable_css_class
-      @embeddable_css_class = ""
-      embeddable_host = EmbeddableHost.record_for_url(request.referer)
-      @embeddable_css_class = " class=\"#{embeddable_host.class_name}\"" if embeddable_host.present? and embeddable_host.class_name.present?
-    end
+  def prepare_embeddable
+    @embeddable_css_class = ""
+    embeddable_host = EmbeddableHost.record_for_url(request.referer)
+    @embeddable_css_class = " class=\"#{embeddable_host.class_name}\"" if embeddable_host.present? && embeddable_host.class_name.present?
 
-    def ensure_api_request
-      raise Discourse::InvalidAccess.new('api key not set') if !is_api?
-    end
+    @data_referer = request.referer
+    @data_referer = '*' if SiteSetting.embed_any_origin? && @data_referer.blank?
+  end
 
-    def ensure_embeddable
+  def ensure_api_request
+    raise Discourse::InvalidAccess.new('api key not set') if !is_api?
+  end
 
-      if !(Rails.env.development? && current_user.try(:admin?))
-        raise Discourse::InvalidAccess.new('invalid referer host') unless EmbeddableHost.url_allowed?(request.referer)
+  def ensure_embeddable
+    if !(Rails.env.development? && current_user&.admin?)
+      referer = request.referer
+
+      unless referer && EmbeddableHost.url_allowed?(referer)
+        raise Discourse::InvalidAccess.new('invalid referer host')
       end
-
-      response.headers['X-Frame-Options'] = "ALLOWALL"
-    rescue URI::InvalidURIError
-      raise Discourse::InvalidAccess.new('invalid referer host')
     end
 
+    response.headers.delete('X-Frame-Options')
+  rescue URI::Error
+    raise Discourse::InvalidAccess.new('invalid referer host')
+  end
 
 end

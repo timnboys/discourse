@@ -1,12 +1,10 @@
-require_dependency 'wizard'
-require_dependency 'wizard/builder'
-require_dependency 'wizard/step_updater'
+# frozen_string_literal: true
 
 class StepsController < ApplicationController
+  requires_login
 
-  before_filter :ensure_wizard_enabled
-  before_filter :ensure_logged_in
-  before_filter :ensure_admin
+  before_action :ensure_wizard_enabled
+  before_action :ensure_admin
 
   def update
     wizard = Wizard::Builder.new(current_user).build
@@ -20,7 +18,7 @@ class StepsController < ApplicationController
     else
       errors = []
       updater.errors.messages.each do |field, msg|
-        errors << {field: field, description: msg.join }
+        errors << { field: field, description: msg.join }
       end
       render json: { errors: errors }, status: 422
     end

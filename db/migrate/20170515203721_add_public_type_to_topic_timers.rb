@@ -1,4 +1,6 @@
-class AddPublicTypeToTopicTimers < ActiveRecord::Migration
+# frozen_string_literal: true
+
+class AddPublicTypeToTopicTimers < ActiveRecord::Migration[4.2]
   def up
     add_column :topic_timers, :public_type, :boolean, default: true
 

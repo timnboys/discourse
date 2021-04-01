@@ -1,4 +1,6 @@
-class AddDefaultNotificationLevelToGroup < ActiveRecord::Migration
+# frozen_string_literal: true
+
+class AddDefaultNotificationLevelToGroup < ActiveRecord::Migration[4.2]
   def up
     add_column :groups, :default_notification_level, :integer, default: 3, null: false
     # don't auto watch 'moderators' it is just way too loud

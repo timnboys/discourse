@@ -1,9 +1,14 @@
+# frozen_string_literal: true
+
 class Permalink < ActiveRecord::Base
   belongs_to :topic
   belongs_to :post
   belongs_to :category
+  belongs_to :tag
 
   before_validation :normalize_url
+
+  validates :url, uniqueness: true
 
   class Normalizer
     attr_reader :source
@@ -21,8 +26,8 @@ class Permalink < ActiveRecord::Base
       return unless rule =~ /\/.*\//
 
       escaping = false
-      regex = ""
-      sub = ""
+      regex = +""
+      sub = +""
       c = 0
 
       rule.chars.each do |l|
@@ -37,15 +42,15 @@ class Permalink < ActiveRecord::Base
       end
 
       if regex.length > 1
-        [Regexp.new(regex[1..-1]), sub[1..-1] || ""] rescue nil
+        [Regexp.new(regex[1..-1]), sub[1..-1] || ""]
       end
 
     end
 
     def normalize(url)
       return url unless @rules
-      @rules.each do |(regex,sub)|
-        url = url.sub(regex,sub)
+      @rules.each do |(regex, sub)|
+        url = url.sub(regex, sub)
       end
 
       url
@@ -56,10 +61,10 @@ class Permalink < ActiveRecord::Base
   def self.normalize_url(url)
     if url
       url = url.strip
-      url = url[1..-1] if url[0,1] == '/'
+      url = url[1..-1] if url[0, 1] == '/'
     end
 
-    normalizations =  SiteSetting.permalink_normalizations
+    normalizations = SiteSetting.permalink_normalizations
 
     @normalizer = Normalizer.new(normalizations) unless @normalizer && @normalizer.source == normalizations
     @normalizer.normalize(url)
@@ -75,16 +80,17 @@ class Permalink < ActiveRecord::Base
 
   def target_url
     return external_url if external_url
-    return "#{Discourse::base_uri}#{post.url}" if post
+    return "#{Discourse.base_path}#{post.url}" if post
     return topic.relative_url if topic
     return category.url if category
+    return tag.full_url if tag
     nil
   end
 
-  def self.filter_by(url=nil)
+  def self.filter_by(url = nil)
     permalinks = Permalink
-                  .includes(:topic, :post, :category)
-                  .order('permalinks.created_at desc')
+      .includes(:topic, :post, :category, :tag)
+      .order('permalinks.created_at desc')
 
     permalinks.where!('url ILIKE :url OR external_url ILIKE :url', url: "%#{url}%") if url.present?
     permalinks.limit!(100)
@@ -101,9 +107,10 @@ end
 #  topic_id     :integer
 #  post_id      :integer
 #  category_id  :integer
-#  created_at   :datetime
-#  updated_at   :datetime
+#  created_at   :datetime         not null
+#  updated_at   :datetime         not null
 #  external_url :string(1000)
+#  tag_id       :integer
 #
 # Indexes
 #

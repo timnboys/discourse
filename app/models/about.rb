@@ -1,4 +1,16 @@
+# frozen_string_literal: true
+
 class About
+  class CategoryMods
+    include ActiveModel::Serialization
+    attr_reader :category_id, :moderators
+
+    def initialize(category_id, moderators)
+      @category_id = category_id
+      @moderators = moderators
+    end
+  end
+
   include ActiveModel::Serialization
   include StatsCacheable
 
@@ -11,6 +23,10 @@ class About
 
   def self.fetch_stats
     About.new.stats
+  end
+
+  def initialize(user = nil)
+    @user = user
   end
 
   def version
@@ -35,12 +51,14 @@ class About
 
   def moderators
     @moderators ||= User.where(moderator: true, admin: false)
-                        .human_users
-                        .order(:username_lower)
+      .human_users
+      .order("last_seen_at DESC")
   end
 
   def admins
-    @admins ||= User.where(admin: true).human_users.order(:username_lower)
+    @admins ||= User.where(admin: true)
+      .human_users
+      .order("last_seen_at DESC")
   end
 
   def stats
@@ -62,4 +80,41 @@ class About
     }
   end
 
+  def category_moderators
+    allowed_cats = Guardian.new(@user).allowed_category_ids
+    return [] if allowed_cats.blank?
+
+    cats_with_mods = Category.where.not(reviewable_by_group_id: nil).pluck(:id)
+
+    category_ids = cats_with_mods & allowed_cats
+    return [] if category_ids.blank?
+
+    per_cat_limit = category_mods_limit / category_ids.size
+    per_cat_limit = 1 if per_cat_limit < 1
+
+    results = DB.query(<<~SQL, category_ids: category_ids)
+        SELECT c.id category_id
+             , (ARRAY_AGG(u.id ORDER BY u.last_seen_at DESC))[:#{per_cat_limit}] user_ids
+          FROM categories c
+          JOIN group_users gu ON gu.group_id = c.reviewable_by_group_id
+          JOIN users u ON u.id = gu.user_id
+         WHERE c.id IN (:category_ids)
+      GROUP BY c.id
+      ORDER BY c.position
+    SQL
+
+    mods = User.where(id: results.map(&:user_ids).flatten.uniq).index_by(&:id)
+
+    results.map do |row|
+      CategoryMods.new(row.category_id, mods.values_at(*row.user_ids))
+    end
+  end
+
+  def category_mods_limit
+    @category_mods_limit || 100
+  end
+
+  def category_mods_limit=(number)
+    @category_mods_limit = number
+  end
 end

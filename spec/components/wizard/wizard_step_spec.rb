@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require 'rails_helper'
 require 'wizard'
 
@@ -13,7 +15,7 @@ describe Wizard::Step do
 
     dropdown = step.add_field(id: 'snacks', type: 'dropdown')
     dropdown.add_choice('candy')
-    dropdown.add_choice('nachos', data: {color: 'yellow'})
+    dropdown.add_choice('nachos', data: { color: 'yellow' })
     dropdown.add_choice('pizza', label: 'Pizza!')
 
     expect(step.fields).to eq([text, dropdown])
@@ -21,4 +23,3 @@ describe Wizard::Step do
   end
 
 end
-

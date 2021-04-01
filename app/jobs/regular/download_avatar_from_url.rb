@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 module Jobs
 
-  class DownloadAvatarFromUrl < Jobs::Base
+  class DownloadAvatarFromUrl < ::Jobs::Base
     sidekiq_options retry: false
 
     def execute(args)
@@ -12,7 +14,15 @@ module Jobs
 
       return unless user = User.find_by(id: user_id)
 
-      UserAvatar.import_url_for_user(url, user, override_gravatar: args[:override_gravatar])
+      begin
+        UserAvatar.import_url_for_user(
+          url,
+          user,
+          override_gravatar: args[:override_gravatar]
+        )
+      rescue Discourse::InvalidParameters => e
+        raise e unless e.message == 'url'
+      end
     end
 
   end

@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 class Admin::ColorSchemesController < Admin::AdminController
 
-  before_filter :fetch_color_scheme, only: [:update, :destroy]
+  before_action :fetch_color_scheme, only: [:update, :destroy]
 
   def index
     render_serialized(ColorScheme.base_color_schemes + ColorScheme.order('id ASC').all.to_a, ColorSchemeSerializer)
@@ -29,7 +31,6 @@ class Admin::ColorSchemesController < Admin::AdminController
     render json: success_json
   end
 
-
   private
 
   def fetch_color_scheme
@@ -37,6 +38,6 @@ class Admin::ColorSchemesController < Admin::AdminController
   end
 
   def color_scheme_params
-    params.permit(color_scheme: [:base_scheme_id, :name, colors: [:name, :hex]])[:color_scheme]
+    params.permit(color_scheme: [:base_scheme_id, :name, :user_selectable, colors: [:name, :hex]])[:color_scheme]
   end
 end

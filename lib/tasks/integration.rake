@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require 'open-uri'
 
 desc 'Creates the integration fixtures. Requires a development instance running.'
@@ -37,7 +39,6 @@ task 'integration:create_fixtures' => :environment do
   end
 
 end
-
 
 def fake_xhr(url)
   uri = URI(url)

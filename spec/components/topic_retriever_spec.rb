@@ -1,11 +1,17 @@
+# frozen_string_literal: true
+
 require 'rails_helper'
-require_dependency 'topic_retriever'
 
 describe TopicRetriever do
 
   let(:embed_url) { "http://eviltrout.com/2013/02/10/why-discourse-uses-emberjs.html" }
   let(:author_username) { "eviltrout" }
   let(:topic_retriever) { TopicRetriever.new(embed_url, author_username: author_username) }
+
+  it "can initialize without optional parameters" do
+    t = TopicRetriever.new(embed_url)
+    expect(t).to be_present
+  end
 
   describe "#retrieve" do
     context "when host is invalid" do
@@ -31,9 +37,9 @@ describe TopicRetriever do
     end
 
     context "when host is not invalid" do
-        before do
-          topic_retriever.stubs(:invalid_url?).returns(false)
-        end
+      before do
+        topic_retriever.stubs(:invalid_url?).returns(false)
+      end
 
       context "when topics have been retrieived recently" do
         before do
@@ -56,6 +62,11 @@ describe TopicRetriever do
           topic_retriever.retrieve
         end
       end
+    end
+
+    it "works with URLs with whitespaces" do
+      expect { TopicRetriever.new(" https://example.com ").retrieve }
+        .not_to raise_error
     end
   end
 

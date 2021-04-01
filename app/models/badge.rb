@@ -1,6 +1,11 @@
-require_dependency 'slug'
+# frozen_string_literal: true
 
 class Badge < ActiveRecord::Base
+  # TODO: Drop in July 2021
+  self.ignored_columns = %w{image}
+
+  include GlobalPath
+
   # NOTE: These badge ids are not in order! They are grouped logically.
   #       When picking an id, *search* for it.
 
@@ -15,6 +20,7 @@ class Badge < ActiveRecord::Base
   GreatPost = 8
   Autobiographer = 9
   Editor = 10
+  WikiEditor = 48
 
   FirstLike = 11
   FirstShare = 12
@@ -56,14 +62,21 @@ class Badge < ActiveRecord::Base
   GivesBack = 32
   Empathetic = 39
 
+  Enthusiast = 45
+  Aficionado = 46
+  Devotee = 47
+
   NewUserOfTheMonth = 44
 
   # other consts
   AutobiographerMinBioLength = 10
 
+  # used by serializer
+  attr_accessor :has_badge
+
   def self.trigger_hash
     Hash[*(
-      Badge::Trigger.constants.map{|k|
+      Badge::Trigger.constants.map { |k|
         [k.to_s.underscore, Badge::Trigger.const_get(k)]
       }.flatten
     )]
@@ -92,6 +105,7 @@ class Badge < ActiveRecord::Base
 
   belongs_to :badge_type
   belongs_to :badge_grouping
+  belongs_to :image_upload, class_name: 'Upload'
 
   has_many :user_badges, dependent: :destroy
 
@@ -100,9 +114,15 @@ class Badge < ActiveRecord::Base
   validates :allow_title, inclusion: [true, false]
   validates :multiple_grant, inclusion: [true, false]
 
-  scope :enabled, ->{ where(enabled: true) }
+  scope :enabled, -> { where(enabled: true) }
 
   before_create :ensure_not_system
+
+  after_commit do
+    SvgSprite.expire_cache
+    UserStat.update_distinct_badge_count if saved_change_to_enabled?
+    UserBadge.ensure_consistency! if saved_change_to_enabled?
+  end
 
   # fields that can not be edited on system badges
   def self.protected_system_fields
@@ -129,7 +149,7 @@ class Badge < ActiveRecord::Base
   end
 
   def self.ensure_consistency!
-    exec_sql <<-SQL.squish
+    DB.exec <<~SQL
       DELETE FROM user_badges
             USING user_badges ub
         LEFT JOIN users u ON u.id = ub.user_id
@@ -137,7 +157,7 @@ class Badge < ActiveRecord::Base
               AND user_badges.id = ub.id
     SQL
 
-    exec_sql <<-SQL.squish
+    DB.exec <<~SQL
       WITH X AS (
           SELECT badge_id
                , COUNT(user_id) users
@@ -150,6 +170,62 @@ class Badge < ActiveRecord::Base
        WHERE id = X.badge_id
          AND grant_count <> X.users
     SQL
+  end
+
+  def clear_user_titles!
+    DB.exec(<<~SQL, badge_id: self.id, updated_at: Time.zone.now)
+      UPDATE users AS u
+      SET title = '', updated_at = :updated_at
+      FROM user_profiles AS up
+      WHERE up.user_id = u.id AND up.granted_title_badge_id = :badge_id
+    SQL
+    DB.exec(<<~SQL, badge_id: self.id)
+      UPDATE user_profiles AS up
+      SET badge_granted_title = false, granted_title_badge_id = NULL
+      WHERE up.granted_title_badge_id = :badge_id
+    SQL
+  end
+
+  ##
+  # Update all user titles based on a badge to the new name
+  def update_user_titles!(new_title)
+    DB.exec(<<~SQL, granted_title_badge_id: self.id, title: new_title, updated_at: Time.zone.now)
+      UPDATE users AS u
+      SET title = :title, updated_at = :updated_at
+      FROM user_profiles AS up
+      WHERE up.user_id = u.id AND up.granted_title_badge_id = :granted_title_badge_id
+    SQL
+  end
+
+  ##
+  # When a badge has its TranslationOverride cleared, reset
+  # all user titles granted to the standard name.
+  def reset_user_titles!
+    DB.exec(<<~SQL, granted_title_badge_id: self.id, updated_at: Time.zone.now)
+      UPDATE users AS u
+      SET title = badges.name, updated_at = :updated_at
+      FROM user_profiles AS up
+      INNER JOIN badges ON badges.id = up.granted_title_badge_id
+      WHERE up.user_id = u.id AND up.granted_title_badge_id = :granted_title_badge_id
+    SQL
+  end
+
+  def self.i18n_name(name)
+    name.downcase.tr(' ', '_')
+  end
+
+  def self.display_name(name)
+    I18n.t(i18n_key(name), default: name)
+  end
+
+  def self.i18n_key(name)
+    "badges.#{i18n_name(name)}.name"
+  end
+
+  def self.find_system_badge_id_from_translation_key(translation_key)
+    return unless translation_key.starts_with?('badges.')
+    badge_name_klass = translation_key.split('.').second.camelize
+    Badge.const_defined?(badge_name_klass) ? "Badge::#{badge_name_klass}".constantize : nil
   end
 
   def awarded_for_trust_level?
@@ -166,7 +242,7 @@ class Badge < ActiveRecord::Base
   end
 
   def default_icon=(val)
-    unless self.image
+    if self.image_upload_id.blank?
       self.icon ||= val
       self.icon = val if self.icon == "fa-certificate"
     end
@@ -178,19 +254,22 @@ class Badge < ActiveRecord::Base
 
   def default_badge_grouping_id=(val)
     # allow to correct orphans
-    if !self.badge_grouping_id || self.badge_grouping_id < 0
+    if !self.badge_grouping_id || self.badge_grouping_id <= BadgeGrouping::Other
       self.badge_grouping_id = val
     end
   end
 
   def display_name
-    key = "badges.#{i18n_name}.name"
-    I18n.t(key, default: self.name)
+    self.class.display_name(name)
+  end
+
+  def translation_key
+    self.class.i18n_key(name)
   end
 
   def long_description
     key = "badges.#{i18n_name}.long_description"
-    I18n.t(key, default: self[:long_description] || '')
+    I18n.t(key, default: self[:long_description] || '', base_uri: Discourse.base_path, max_likes_per_day: SiteSetting.max_likes_per_day)
   end
 
   def long_description=(val)
@@ -200,7 +279,7 @@ class Badge < ActiveRecord::Base
 
   def description
     key = "badges.#{i18n_name}.description"
-    I18n.t(key, default: self[:description] || '')
+    I18n.t(key, default: self[:description] || '', base_uri: Discourse.base_path, max_likes_per_day: SiteSetting.max_likes_per_day)
   end
 
   def description=(val)
@@ -208,21 +287,29 @@ class Badge < ActiveRecord::Base
     val
   end
 
-
   def slug
     Slug.for(self.display_name, '-')
   end
 
+  def manually_grantable?
+    query.blank? && !system?
+  end
+
+  def i18n_name
+    @i18n_name ||= self.class.i18n_name(name)
+  end
+
+  def image_url
+    if image_upload_id.present?
+      upload_cdn_path(image_upload.url)
+    end
+  end
+
   protected
 
-    def ensure_not_system
-      self.id = [Badge.maximum(:id) + 1, 100].max unless id
-    end
-
-    def i18n_name
-      self.name.downcase.tr(' ', '_')
-    end
-
+  def ensure_not_system
+    self.id = [Badge.maximum(:id) + 1, 100].max unless id
+  end
 end
 
 # == Schema Information

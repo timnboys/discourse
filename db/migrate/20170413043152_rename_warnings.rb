@@ -1,4 +1,6 @@
-class RenameWarnings < ActiveRecord::Migration
+# frozen_string_literal: true
+
+class RenameWarnings < ActiveRecord::Migration[4.2]
   def up
     rename_table :warnings, :user_warnings
   end

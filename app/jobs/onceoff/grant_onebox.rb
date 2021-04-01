@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 module Jobs
 
-  class GrantOnebox < Jobs::Onceoff
+  class GrantOnebox < ::Jobs::Onceoff
     sidekiq_options queue: 'low'
 
     def execute_onceoff(args)
@@ -8,16 +10,16 @@ module Jobs
       to_award = {}
 
       Post.secured(Guardian.new)
-          .select(:id, :created_at, :raw, :user_id)
-          .visible
-          .public_posts
-          .where("raw LIKE '%http%'")
-          .find_in_batches do |group|
+        .select(:id, :created_at, :raw, :user_id)
+        .visible
+        .public_posts
+        .where("raw LIKE '%http%'")
+        .find_in_batches do |group|
         group.each do |p|
           begin
             # Note we can't use `p.cooked` here because oneboxes have been cooked out
             cooked = PrettyText.cook(p.raw)
-            doc = Nokogiri::HTML::fragment(cooked)
+            doc = Nokogiri::HTML5::fragment(cooked)
             if doc.search('a.onebox').size > 0
               to_award[p.user_id] ||= { post_id: p.id, created_at: p.created_at }
             end
@@ -35,7 +37,7 @@ module Jobs
     end
 
     def badge
-      @badge ||= Badge.find(Badge::FirstOnebox)
+      Badge.find(Badge::FirstOnebox)
     end
 
   end

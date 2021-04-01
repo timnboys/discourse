@@ -1,6 +1,19 @@
+# frozen_string_literal: true
+
 require 'rails_helper'
 
 describe TopicUser do
+  let :watching do
+    TopicUser.notification_levels[:watching]
+  end
+
+  let :regular do
+    TopicUser.notification_levels[:regular]
+  end
+
+  let :tracking do
+    TopicUser.notification_levels[:tracking]
+  end
 
   describe "#unwatch_categories!" do
     it "correctly unwatches categories" do
@@ -10,9 +23,6 @@ describe TopicUser do
       tracked_topic = Fabricate(:topic)
 
       user = op_topic.user
-      watching = TopicUser.notification_levels[:watching]
-      regular = TopicUser.notification_levels[:regular]
-      tracking = TopicUser.notification_levels[:tracking]
 
       TopicUser.change(user.id, op_topic, notification_level: watching)
       TopicUser.change(user.id, another_topic, notification_level: watching)
@@ -65,7 +75,7 @@ describe TopicUser do
   it { is_expected.to belong_to :user }
   it { is_expected.to belong_to :topic }
 
-  let(:user) { Fabricate(:user) }
+  fab!(:user) { Fabricate(:user) }
 
   let(:topic) {
     u = Fabricate(:user)
@@ -75,14 +85,13 @@ describe TopicUser do
   let(:topic_user) { TopicUser.get(topic, user) }
   let(:topic_creator_user) { TopicUser.get(topic, topic.user) }
 
-  let(:post) { Fabricate(:post, topic: topic, user: user) }
   let(:new_user) {
     u = Fabricate(:user)
     u.user_option.update_columns(auto_track_topics_after_msecs: 1000)
     u
   }
 
-  let(:topic_new_user) { TopicUser.get(topic, new_user)}
+  let(:topic_new_user) { TopicUser.get(topic, new_user) }
   let(:yesterday) { DateTime.now.yesterday }
 
   def ensure_topic_user
@@ -100,15 +109,16 @@ describe TopicUser do
 
   describe 'notifications' do
     it 'should trigger the right DiscourseEvent' do
+      called = false
+      blk = Proc.new { called = true }
       begin
-        called = false
-        DiscourseEvent.on(:topic_notification_level_changed) { called = true }
+        DiscourseEvent.on(:topic_notification_level_changed, &blk)
 
         TopicUser.change(user.id, topic.id, notification_level: TopicUser.notification_levels[:tracking])
 
         expect(called).to eq(true)
       ensure
-        DiscourseEvent.off(:topic_notification_level_changed) { called = true }
+        DiscourseEvent.off(:topic_notification_level_changed, &blk)
       end
     end
 
@@ -127,12 +137,12 @@ describe TopicUser do
 
     it 'should be set to "regular" notifications, by default on non creators' do
       ensure_topic_user
-      expect(TopicUser.get(topic,user).notification_level).to eq(TopicUser.notification_levels[:regular])
+      expect(TopicUser.get(topic, user).notification_level).to eq(TopicUser.notification_levels[:regular])
     end
 
     it 'reason should reset when changed' do
       topic.notify_muted!(topic.user)
-      expect(TopicUser.get(topic,topic.user).notifications_reason_id).to eq(TopicUser.notification_reasons[:user_changed])
+      expect(TopicUser.get(topic, topic.user).notifications_reason_id).to eq(TopicUser.notification_reasons[:user_changed])
     end
 
     it 'should have the correct reason for a user change when watched' do
@@ -182,7 +192,7 @@ describe TopicUser do
 
       TopicUser.track_visit!(topic.id, user.id)
       # reload is a no go
-      topic_user = TopicUser.get(topic,user)
+      topic_user = TopicUser.get(topic, user)
       expect(topic_user.first_visited_at.to_i).to eq(yesterday.to_i)
       expect(topic_user.last_visited_at.to_i).to eq(Time.zone.now.to_i)
 
@@ -193,12 +203,12 @@ describe TopicUser do
 
     context "without auto tracking" do
 
-      let(:topic_user) { TopicUser.get(topic,user) }
+      let(:topic_user) { TopicUser.get(topic, user) }
 
       it 'should create a new record for a visit' do
         freeze_time yesterday
 
-        TopicUser.update_last_read(user, topic.id, 1, 0)
+        TopicUser.update_last_read(user, topic.id, 1, 1, 0)
 
         expect(topic_user.last_read_post_number).to eq(1)
         expect(topic_user.last_visited_at.to_i).to eq(yesterday.to_i)
@@ -210,14 +220,14 @@ describe TopicUser do
         today = Time.zone.now
         freeze_time Time.zone.now
 
-        TopicUser.update_last_read(user, topic.id, 1, 0)
+        TopicUser.update_last_read(user, topic.id, 1, 1, 0)
 
         tomorrow = 1.day.from_now
         freeze_time tomorrow
 
         Fabricate(:post, topic: topic, user: user)
-        TopicUser.update_last_read(user, topic.id, 2, 0)
-        topic_user = TopicUser.get(topic,user)
+        TopicUser.update_last_read(user, topic.id, 2, 1, 0)
+        topic_user = TopicUser.get(topic, user)
 
         expect(topic_user.last_read_post_number).to eq(2)
         expect(topic_user.last_visited_at.to_i).to eq(today.to_i)
@@ -226,13 +236,63 @@ describe TopicUser do
     end
 
     context 'private messages' do
-      it 'should ensure recepients and senders are watching' do
+      fab!(:target_user) { Fabricate(:user) }
 
-        target_user = Fabricate(:user)
-        post = create_post(archetype: Archetype.private_message, target_usernames: target_user.username);
+      let(:post) do
+        create_post(
+          archetype: Archetype.private_message,
+          target_usernames: target_user.username
+        )
+      end
 
-        expect(TopicUser.get(post.topic, post.user).notification_level).to eq(TopicUser.notification_levels[:watching])
-        expect(TopicUser.get(post.topic, target_user).notification_level).to eq(TopicUser.notification_levels[:watching])
+      let(:topic) { post.topic }
+
+      it 'should ensure recipients and senders are watching' do
+        expect(TopicUser.get(topic, post.user).notification_level)
+          .to eq(TopicUser.notification_levels[:watching])
+
+        expect(TopicUser.get(topic, target_user).notification_level)
+          .to eq(TopicUser.notification_levels[:watching])
+      end
+
+      it 'should ensure invited user is watching once visited' do
+        another_user = Fabricate(:user)
+        topic.invite(target_user, another_user.username)
+        TopicUser.track_visit!(topic.id, another_user.id)
+
+        expect(TopicUser.get(topic, another_user).notification_level)
+          .to eq(TopicUser.notification_levels[:watching])
+
+        another_user = Fabricate(:user)
+        TopicUser.track_visit!(topic.id, another_user.id)
+
+        expect(TopicUser.get(topic, another_user).notification_level)
+          .to eq(TopicUser.notification_levels[:regular])
+      end
+
+      describe 'inviting a group' do
+        let(:group) do
+          Fabricate(:group,
+            default_notification_level: NotificationLevels.topic_levels[:tracking]
+          )
+        end
+
+        it "should use group's default notification level" do
+          another_user = Fabricate(:user)
+          group.add(another_user)
+
+          topic.invite_group(target_user, group)
+
+          expect(TopicUser.get(topic, another_user).notification_level)
+            .to eq(TopicUser.notification_levels[:tracking])
+
+          another_user = Fabricate(:user)
+          topic.invite(target_user, another_user.username)
+          TopicUser.track_visit!(topic.id, another_user.id)
+
+          expect(TopicUser.get(topic, another_user).notification_level)
+            .to eq(TopicUser.notification_levels[:watching])
+        end
       end
     end
 
@@ -241,7 +301,7 @@ describe TopicUser do
       let(:post_creator) { PostCreator.new(new_user, raw: Fabricate.build(:post).raw, topic_id: topic.id) }
 
       before do
-        TopicUser.update_last_read(new_user, topic.id, 2, 0)
+        TopicUser.update_last_read(new_user, topic.id, 2, 2, 0)
       end
 
       it 'should automatically track topics you reply to' do
@@ -253,8 +313,10 @@ describe TopicUser do
       it 'should update tracking state when you reply' do
         new_user.user_option.update_column(:notification_level_when_replying, 3)
         post_creator.create
-        TopicUser.exec_sql("UPDATE topic_users set notification_level=2
-                       WHERE topic_id = :topic_id AND user_id = :user_id", topic_id: topic_new_user.topic_id, user_id: topic_new_user.user_id)
+        DB.exec("UPDATE topic_users set notification_level=2
+                 WHERE topic_id = :topic_id AND user_id = :user_id",
+          topic_id: topic_new_user.topic_id, user_id: topic_new_user.user_id)
+
         TopicUser.auto_notification(topic_new_user.user_id, topic_new_user.topic_id, TopicUser.notification_reasons[:created_post], TopicUser.notification_levels[:watching])
 
         tu = TopicUser.find_by(user_id: topic_new_user.user_id, topic_id: topic_new_user.topic_id)
@@ -264,7 +326,7 @@ describe TopicUser do
       it 'should not update tracking state when you reply' do
         new_user.user_option.update_column(:notification_level_when_replying, 3)
         post_creator.create
-        TopicUser.exec_sql("UPDATE topic_users set notification_level=3
+        DB.exec("UPDATE topic_users set notification_level=3
                        WHERE topic_id = :topic_id AND user_id = :user_id", topic_id: topic_new_user.topic_id, user_id: topic_new_user.user_id)
         TopicUser.auto_notification(topic_new_user.user_id, topic_new_user.topic_id, TopicUser.notification_reasons[:created_post], TopicUser.notification_levels[:tracking])
 
@@ -275,7 +337,7 @@ describe TopicUser do
       it 'should not update tracking state when state manually set to normal you reply' do
         new_user.user_option.update_column(:notification_level_when_replying, 3)
         post_creator.create
-        TopicUser.exec_sql("UPDATE topic_users set notification_level=1
+        DB.exec("UPDATE topic_users set notification_level=1
                        WHERE topic_id = :topic_id AND user_id = :user_id", topic_id: topic_new_user.topic_id, user_id: topic_new_user.user_id)
         TopicUser.auto_notification(topic_new_user.user_id, topic_new_user.topic_id, TopicUser.notification_reasons[:created_post], TopicUser.notification_levels[:tracking])
 
@@ -286,7 +348,7 @@ describe TopicUser do
       it 'should not update tracking state when state manually set to muted you reply' do
         new_user.user_option.update_column(:notification_level_when_replying, 3)
         post_creator.create
-        TopicUser.exec_sql("UPDATE topic_users set notification_level=0
+        DB.exec("UPDATE topic_users set notification_level=0
                        WHERE topic_id = :topic_id AND user_id = :user_id", topic_id: topic_new_user.topic_id, user_id: topic_new_user.user_id)
         TopicUser.auto_notification(topic_new_user.user_id, topic_new_user.topic_id, TopicUser.notification_reasons[:created_post], TopicUser.notification_levels[:tracking])
 
@@ -303,14 +365,26 @@ describe TopicUser do
 
       it 'should automatically track topics after they are read for long enough' do
         expect(topic_new_user.notification_level).to eq(TopicUser.notification_levels[:regular])
-        TopicUser.update_last_read(new_user, topic.id, 2, SiteSetting.default_other_auto_track_topics_after_msecs + 1)
+        TopicUser.update_last_read(new_user, topic.id, 2, 2, SiteSetting.default_other_auto_track_topics_after_msecs + 1)
         expect(TopicUser.get(topic, new_user).notification_level).to eq(TopicUser.notification_levels[:tracking])
       end
 
       it 'should not automatically track topics after they are read for long enough if changed manually' do
         TopicUser.change(new_user, topic, notification_level: TopicUser.notification_levels[:regular])
-        TopicUser.update_last_read(new_user, topic, 2, SiteSetting.default_other_auto_track_topics_after_msecs + 1)
+        TopicUser.update_last_read(new_user, topic, 2, 2, SiteSetting.default_other_auto_track_topics_after_msecs + 1)
         expect(topic_new_user.notification_level).to eq(TopicUser.notification_levels[:regular])
+      end
+
+      it 'should not automatically track PMs' do
+        new_user.user_option.update!(auto_track_topics_after_msecs: 0)
+
+        another_user = Fabricate(:user)
+        pm = Fabricate(:private_message_topic, user: another_user)
+        pm.invite(another_user, new_user.username)
+
+        TopicUser.track_visit!(pm.id, new_user.id)
+        TopicUser.update_last_read(new_user, pm.id, 2, 2, 1000)
+        expect(TopicUser.get(pm, new_user).notification_level).to eq(TopicUser.notification_levels[:watching])
       end
     end
   end
@@ -359,10 +433,10 @@ describe TopicUser do
     p2 = Fabricate(:post, user: p1.user, topic: p1.topic, post_number: 2)
     p1.topic.notifier.watch_topic!(p1.user_id)
 
-    TopicUser.exec_sql("UPDATE topic_users set highest_seen_post_number=1, last_read_post_number=0
+    DB.exec("UPDATE topic_users set highest_seen_post_number=1, last_read_post_number=0
                        WHERE topic_id = :topic_id AND user_id = :user_id", topic_id: p1.topic_id, user_id: p1.user_id)
 
-    [p1,p2].each do |p|
+    [p1, p2].each do |p|
       PostTiming.create(topic_id: p.topic_id, post_number: p.post_number, user_id: p.user_id, msecs: 100)
     end
 
@@ -379,6 +453,8 @@ describe TopicUser do
     it "will receive email notification for every topic" do
       user1 = Fabricate(:user)
 
+      Jobs.run_immediately!
+      SiteSetting.disable_mailing_list_mode = false
       SiteSetting.default_email_mailing_list_mode = true
       SiteSetting.default_email_mailing_list_mode_frequency = 1
 
@@ -402,4 +478,32 @@ describe TopicUser do
     end
   end
 
+  it "correctly triggers an event on first visit" do
+    begin
+      tracked_user = Fabricate(:user)
+      post = create_post
+
+      called = 0
+      visits = []
+      user_first_visit = -> (topic_id, user_id) do
+        visits << "#{topic_id}-#{user_id}"
+        called += 1
+      end
+
+      DiscourseEvent.on(:topic_first_visited_by_user, &user_first_visit)
+
+      expect(called).to eq(0)
+
+      TopicUser.change(tracked_user, post.topic.id, total_msecs_viewed: 1)
+
+      expect(visits).to eq(["#{post.topic.id}-#{tracked_user.id}"])
+      expect(called).to eq(1)
+
+      TopicUser.change(tracked_user, post.topic.id, total_msecs_viewed: 2)
+
+      expect(called).to eq(1)
+    ensure
+      DiscourseEvent.off(:topic_first_visited_by_user, &user_first_visit)
+    end
+  end
 end

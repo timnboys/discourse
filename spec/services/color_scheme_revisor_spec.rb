@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require 'rails_helper'
 
 describe ColorSchemeRevisor do
@@ -25,8 +27,8 @@ describe ColorSchemeRevisor do
 
     it 'can change colors' do
       ColorSchemeRevisor.revise(color_scheme, valid_params.merge(colors: [
-        {name: color.name, hex: 'BEEF99'},
-        {name: 'bob', hex: 'AAAAAA'}
+        { name: color.name, hex: 'BEEF99' },
+        { name: 'bob', hex: 'AAAAAA' }
       ]))
       color_scheme.reload
 
@@ -39,13 +41,21 @@ describe ColorSchemeRevisor do
     it "doesn't make changes when a color is invalid" do
       expect {
         cs = ColorSchemeRevisor.revise(color_scheme, valid_params.merge(colors: [
-          {name: color.name, hex: 'OOPS'}
+          { name: color.name, hex: 'OOPS' }
         ]))
         expect(cs).not_to be_valid
         expect(cs.errors).to be_present
       }.to_not change { color_scheme.reload.version }
       expect(color_scheme.colors.first.hex).to eq(color.hex)
     end
+
+    it "can change the user_selectable column" do
+      expect(color_scheme.user_selectable).to eq(false)
+
+      ColorSchemeRevisor.revise(color_scheme, { user_selectable: true })
+      expect(color_scheme.reload.user_selectable).to eq(true)
+    end
+
   end
 
 end

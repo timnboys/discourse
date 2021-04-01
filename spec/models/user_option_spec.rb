@@ -1,5 +1,6 @@
+# frozen_string_literal: true
+
 require 'rails_helper'
-require_dependency 'user_option'
 
 describe UserOption do
 
@@ -11,15 +12,16 @@ describe UserOption do
 
       user.reload
 
-      expect(user.user_option.email_always).to eq(SiteSetting.default_email_always)
+      expect(user.user_option.email_level).to eq(SiteSetting.default_email_level)
+      expect(user.user_option.email_messages_level).to eq(SiteSetting.default_email_messages_level)
     end
   end
 
-  describe "should_be_redirected_to_top" do
-    let!(:user) { Fabricate(:user) }
+  describe "defaults" do
+    fab!(:user) { Fabricate(:user) }
 
     it "should be redirected to top when there is a reason to" do
-      user.user_option.expects(:redirected_to_top).returns({ reason: "42" })
+      user.user_option.expects(:redirected_to_top).returns(reason: "42")
       expect(user.user_option.should_be_redirected_to_top).to eq(true)
     end
 
@@ -28,11 +30,47 @@ describe UserOption do
       expect(user.user_option.should_be_redirected_to_top).to eq(false)
     end
 
+    it "should not hide the profile and presence by default" do
+      expect(user.user_option.hide_profile_and_presence).to eq(false)
+    end
+
+    it "should correctly set digest frequency" do
+      SiteSetting.default_email_digest_frequency = 1440
+      user = Fabricate(:user)
+      expect(user.user_option.email_digests).to eq(true)
+      expect(user.user_option.digest_after_minutes).to eq(1440)
+    end
+
+    it "should correctly set digest frequency when disabled" do
+      SiteSetting.default_email_digest_frequency = 0
+      user = Fabricate(:user)
+      expect(user.user_option.email_digests).to eq(false)
+      expect(user.user_option.digest_after_minutes).to eq(0)
+    end
+  end
+
+  describe "site settings" do
+    it "should apply defaults from site settings" do
+
+      SiteSetting.default_other_enable_quoting = false
+      SiteSetting.default_other_enable_defer = true
+      SiteSetting.default_other_external_links_in_new_tab = true
+      SiteSetting.default_other_dynamic_favicon = true
+      SiteSetting.default_other_skip_new_user_tips = true
+
+      user = Fabricate(:user)
+
+      expect(user.user_option.enable_quoting).to eq(false)
+      expect(user.user_option.enable_defer).to eq(true)
+      expect(user.user_option.external_links_in_new_tab).to eq(true)
+      expect(user.user_option.dynamic_favicon).to eq(true)
+      expect(user.user_option.skip_new_user_tips).to eq(true)
+    end
   end
 
   describe "#mailing_list_mode" do
-    let!(:forum_user) { Fabricate(:user) }
-    let!(:mailing_list_user) { Fabricate(:user) }
+    fab!(:forum_user) { Fabricate(:user) }
+    fab!(:mailing_list_user) { Fabricate(:user) }
 
     before do
       forum_user.user_option.update(mailing_list_mode: false)
@@ -53,23 +91,23 @@ describe UserOption do
   end
 
   describe ".redirected_to_top" do
-    let!(:user) { Fabricate(:user) }
+    fab!(:user) { Fabricate(:user) }
 
     it "should have no reason when `SiteSetting.redirect_users_to_top_page` is disabled" do
-      SiteSetting.expects(:redirect_users_to_top_page).returns(false)
+      SiteSetting.redirect_users_to_top_page = false
       expect(user.user_option.redirected_to_top).to eq(nil)
     end
 
     context "when `SiteSetting.redirect_users_to_top_page` is enabled" do
-      before { SiteSetting.expects(:redirect_users_to_top_page).returns(true) }
+      before { SiteSetting.redirect_users_to_top_page = true }
 
       it "should have no reason when top is not in the `SiteSetting.top_menu`" do
-        SiteSetting.expects(:top_menu).returns("latest")
+        SiteSetting.top_menu = "latest"
         expect(user.user_option.redirected_to_top).to eq(nil)
       end
 
       context "and when top is in the `SiteSetting.top_menu`" do
-        before { SiteSetting.expects(:top_menu).returns("latest|top") }
+        before { SiteSetting.top_menu = "latest|top" }
 
         it "should have no reason when there are not enough topics" do
           SiteSetting.expects(:min_redirected_to_top_period).returns(nil)
@@ -86,11 +124,18 @@ describe UserOption do
               user.stubs(:last_seen_at).returns(5.minutes.ago)
             end
 
+            after do
+              $redis.flushdb
+            end
+
             it "should have a reason for the first visit" do
-              expect(user.user_option.redirected_to_top).to eq({
-                reason: I18n.t('redirected_to_top_reasons.new_user'),
-                period: :monthly
-              })
+              freeze_time do
+                delay = SiteSetting.active_user_rate_limit_secs / 2
+
+                expect_enqueued_with(job: :update_top_redirection, args: { user_id: user.id, redirected_at: Time.zone.now.to_s }, at: Time.zone.now + delay) do
+                  expect(user.user_option.redirected_to_top).to eq(reason: I18n.t('redirected_to_top_reasons.new_user'), period: :monthly)
+                end
+              end
             end
 
             it "should not have a reason for next visits" do
@@ -108,10 +153,8 @@ describe UserOption do
               user.last_seen_at = 2.months.ago
               user.user_option.expects(:update_last_redirected_to_top!).once
 
-              expect(user.user_option.redirected_to_top).to eq({
-                reason: I18n.t('redirected_to_top_reasons.not_seen_in_a_month'),
-                period: :monthly
-              })
+              expect(user.user_option.redirected_to_top).to eq(reason: I18n.t('redirected_to_top_reasons.not_seen_in_a_month'),
+                                                               period: :monthly)
             end
 
           end

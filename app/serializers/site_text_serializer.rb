@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class SiteTextSerializer < ApplicationSerializer
   attributes :id, :value, :overridden?, :can_revert?
 
@@ -10,13 +12,12 @@ class SiteTextSerializer < ApplicationSerializer
   end
 
   def overridden?
-    current_val = value
-
-    I18n.overrides_disabled do
-      return I18n.t(object[:id]) != current_val
+    if options[:overridden_keys]
+      options[:overridden_keys].include?(object[:id])
+    else
+      TranslationOverride.exists?(locale: object[:locale], translation_key: object[:id])
     end
   end
 
   alias_method :can_revert?, :overridden?
 end
-

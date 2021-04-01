@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require 'socket'
 
 class SocketServer
@@ -16,7 +18,8 @@ class SocketServer
   end
 
   def stop
-    @server.close if @server
+    @server&.close
+    FileUtils.rm_f(@socket_path)
     @server = nil
     @blk = nil
   end
@@ -26,9 +29,14 @@ class SocketServer
   def new_accept_thread
     server = @server
     Thread.new do
-      done = false
-      while !done
-        done = !accept_connection(server)
+      begin
+        done = false
+        while !done
+          done = !accept_connection(server)
+        end
+      ensure
+        self.stop
+        Rails.logger.info("Cleaned up socket server at #{@socket_path}")
       end
     end
   end
@@ -43,7 +51,7 @@ class SocketServer
     end
 
     start = Time.now
-    line = ""
+    line = +""
 
     while Time.now - start < 10
       if IO.select([socket], nil, nil, 10)
@@ -64,9 +72,9 @@ class SocketServer
   rescue IOError, Errno::EPIPE
     # nothing to do here, case its normal on shutdown
   rescue => e
-    Rails.logger.warn("Failed to handle connection in stats socket #{e}:\n#{e.backtrace.join("\n")}")
+    Rails.logger.warn("Failed to handle connection #{e}:\n#{e.backtrace.join("\n")}")
   ensure
-    socket&.close rescue nil
+    socket&.close
   end
 
   def get_response(command)

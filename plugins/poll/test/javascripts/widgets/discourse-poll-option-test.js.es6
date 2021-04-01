@@ -1,64 +1,71 @@
-import { moduleForWidget, widgetTest } from 'helpers/widget-test';
-moduleForWidget('discourse-poll-option');
+import {
+  moduleForWidget,
+  widgetTest,
+} from "discourse/tests/helpers/widget-test";
+import { queryAll } from "discourse/tests/helpers/qunit-helpers";
+
+moduleForWidget("discourse-poll-option");
 
 const template = `{{mount-widget
                     widget="discourse-poll-option"
                     args=(hash option=option isMultiple=isMultiple vote=vote)}}`;
 
-widgetTest('single, not selected', {
+widgetTest("single, not selected", {
   template,
 
-  setup() {
-    this.set('option', { id: 'opt-id' });
-    this.set('vote', []);
+  beforeEach() {
+    this.set("option", { id: "opt-id" });
+    this.set("vote", []);
   },
 
   test(assert) {
-    assert.ok(find('li .fa-circle-o:eq(0)').length === 1);
-  }
+    assert.ok(queryAll("li .d-icon-far-circle:nth-of-type(1)").length === 1);
+  },
 });
 
-widgetTest('single, selected', {
+widgetTest("single, selected", {
   template,
 
-  setup() {
-    this.set('option', { id: 'opt-id' });
-    this.set('vote', ['opt-id']);
+  beforeEach() {
+    this.set("option", { id: "opt-id" });
+    this.set("vote", ["opt-id"]);
   },
 
   test(assert) {
-    assert.ok(find('li .fa-dot-circle-o:eq(0)').length === 1);
-  }
+    assert.ok(queryAll("li .d-icon-circle:nth-of-type(1)").length === 1);
+  },
 });
 
-widgetTest('multi, not selected', {
+widgetTest("multi, not selected", {
   template,
 
-  setup() {
+  beforeEach() {
     this.setProperties({
-      option: { id: 'opt-id' },
+      option: { id: "opt-id" },
       isMultiple: true,
-      vote: []
+      vote: [],
     });
   },
 
   test(assert) {
-    assert.ok(find('li .fa-square-o:eq(0)').length === 1);
-  }
+    assert.ok(queryAll("li .d-icon-far-square:nth-of-type(1)").length === 1);
+  },
 });
 
-widgetTest('multi, selected', {
+widgetTest("multi, selected", {
   template,
 
-  setup() {
+  beforeEach() {
     this.setProperties({
-      option: { id: 'opt-id' },
+      option: { id: "opt-id" },
       isMultiple: true,
-      vote: ['opt-id']
+      vote: ["opt-id"],
     });
   },
 
   test(assert) {
-    assert.ok(find('li .fa-check-square-o:eq(0)').length === 1);
-  }
+    assert.ok(
+      queryAll("li .d-icon-far-check-square:nth-of-type(1)").length === 1
+    );
+  },
 });

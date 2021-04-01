@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class UserWarning < ActiveRecord::Base
   belongs_to :user
   belongs_to :topic
@@ -12,8 +14,8 @@ end
 #  topic_id      :integer          not null
 #  user_id       :integer          not null
 #  created_by_id :integer          not null
-#  created_at    :datetime
-#  updated_at    :datetime
+#  created_at    :datetime         not null
+#  updated_at    :datetime         not null
 #
 # Indexes
 #

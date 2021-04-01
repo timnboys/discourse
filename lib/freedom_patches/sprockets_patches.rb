@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # This contains two patches to make sprockets more tolerable in dev
 #
 # 1. Stop computing asset paths which triggers sprockets to do mountains of work
@@ -6,7 +8,7 @@
 # 2. Stop using a concatenator that does tons of work checking for semicolons when
 #     when rebuilding an asset
 
-if Rails.env == "development"
+if Rails.env.development? || Rails.env.test?
   module ActionView::Helpers::AssetUrlHelper
 
     def asset_path(source, options = {})
@@ -21,9 +23,9 @@ if Rails.env == "development"
       end
 
       if source[0] != ?/
-       # CODE REMOVED
-       # source = compute_asset_path(source, options)
-       source = "/assets/#{source}"
+        # CODE REMOVED
+        # source = compute_asset_path(source, options)
+        source = "/assets/#{source}"
       end
 
       relative_url_root = defined?(config.relative_url_root) && config.relative_url_root
@@ -51,6 +53,6 @@ if Rails.env == "development"
     end
   end
 
-  Sprockets.register_bundle_metadata_reducer 'application/javascript', :data, proc { "" }, ::SprocketHack.method(:concat_javascript_sources)
+  Sprockets.register_bundle_metadata_reducer 'application/javascript', :data, proc { +"" }, ::SprocketHack.method(:concat_javascript_sources)
 
 end

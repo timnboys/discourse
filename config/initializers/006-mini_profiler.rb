@@ -1,34 +1,42 @@
+# frozen_string_literal: true
+
 # If Mini Profiler is included via gem
 if Rails.configuration.respond_to?(:load_mini_profiler) && Rails.configuration.load_mini_profiler
   require 'rack-mini-profiler'
-  require 'flamegraph'
+  require 'stackprof'
 
   begin
     require 'memory_profiler'
   rescue => e
-     STDERR.put "#{e} failed to require mini profiler"
+    STDERR.put "#{e} failed to require mini profiler"
   end
 
   # initialization is skipped so trigger it
   Rack::MiniProfilerRails.initialize!(Rails.application)
 end
 
-if defined?(Rack::MiniProfiler)
-
+if defined?(Rack::MiniProfiler) && defined?(Rack::MiniProfiler::Config)
   # note, we may want to add some extra security here that disables mini profiler in a multi hosted env unless user global admin
   #   raw_connection means results are not namespaced
   #
   # namespacing gets complex, cause mini profiler is in the rack chain way before multisite
-  Rack::MiniProfiler.config.storage_instance = Rack::MiniProfiler::RedisStore.new(connection:  DiscourseRedis.raw_connection)
+  Rack::MiniProfiler.config.storage_instance = Rack::MiniProfiler::RedisStore.new(
+    connection:  DiscourseRedis.new(nil, namespace: false)
+  )
 
-  skip = [
+  Rack::MiniProfiler.config.snapshot_every_n_requests = GlobalSetting.mini_profiler_snapshots_period
+  Rack::MiniProfiler.config.snapshots_transport_destination_url = GlobalSetting.mini_profiler_snapshots_transport_url
+  Rack::MiniProfiler.config.snapshots_transport_auth_key = GlobalSetting.mini_profiler_snapshots_transport_auth_key
+  Rack::MiniProfiler.config.skip_paths = [
     /^\/message-bus/,
+    /^\/extra-locales/,
     /topics\/timings/,
     /assets/,
     /\/user_avatar\//,
     /\/letter_avatar\//,
     /\/letter_avatar_proxy\//,
     /\/highlight-js\//,
+    /\/svg-sprite\//,
     /qunit/,
     /srv\/status/,
     /commits-widget/,
@@ -36,6 +44,7 @@ if defined?(Rack::MiniProfiler)
     /^\/logs/,
     /^\/site_customizations/,
     /^\/uploads/,
+    /^\/secure-media-uploads/,
     /^\/javascripts\//,
     /^\/images\//,
     /^\/stylesheets\//,
@@ -45,10 +54,7 @@ if defined?(Rack::MiniProfiler)
   # we DO NOT WANT mini-profiler loading on anything but real desktops and laptops
   # so let's rule out all handheld, tablet, and mobile devices
   Rack::MiniProfiler.config.pre_authorize_cb = lambda do |env|
-    path = env['PATH_INFO']
-
-    (env['HTTP_USER_AGENT'] !~ /iPad|iPhone|Android/) &&
-    !skip.any?{|re| re =~ path}
+    env['HTTP_USER_AGENT'] !~ /iPad|iPhone|Android/
   end
 
   # without a user provider our results will use the ip address for namespacing
@@ -68,7 +74,9 @@ if defined?(Rack::MiniProfiler)
   Rack::MiniProfiler.config.backtrace_ignores << /config\/initializers\/silence_logger/
   Rack::MiniProfiler.config.backtrace_ignores << /config\/initializers\/quiet_logger/
 
+  Rack::MiniProfiler.config.backtrace_includes = [/^\/?(app|config|lib|test|plugins)/]
 
+  Rack::MiniProfiler.counter_method(Redis::Client, :call) { 'redis' }
   # Rack::MiniProfiler.counter_method(ActiveRecord::QueryMethods, 'build_arel')
   # Rack::MiniProfiler.counter_method(Array, 'uniq')
   # require "#{Rails.root}/vendor/backports/notification"
@@ -97,9 +105,8 @@ if defined?(Rack::MiniProfiler)
   # Rack::MiniProfiler.profile_method ActionView::PathResolver, 'find_templates'
 end
 
-
 if ENV["PRINT_EXCEPTIONS"]
-  trace      = TracePoint.new(:raise) do |tp|
+  trace = TracePoint.new(:raise) do |tp|
     puts tp.raised_exception
     puts tp.raised_exception.backtrace.join("\n")
     puts

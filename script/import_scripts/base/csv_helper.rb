@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module ImportScripts
   module CsvHelper
     class RowResolver
@@ -10,8 +12,8 @@ module ImportScripts
       end
 
       def initialize(cols)
-        cols.each_with_index do |col,idx|
-          self.class.send(:define_method, col.downcase.gsub(/[\W]/, '_').squeeze('_')) do
+        cols.each_with_index do |col, idx|
+          self.class.public_send(:define_method, col.downcase.gsub(/[\W]/, '_').squeeze('_')) do
             @row[idx]
           end
         end
@@ -22,7 +24,7 @@ module ImportScripts
       first = true
       row = nil
 
-      current_row = ""
+      current_row = +""
       double_quote_count = 0
 
       File.open(filename).each_line do |line|

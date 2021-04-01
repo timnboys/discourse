@@ -1,40 +1,57 @@
-require_dependency 'stylesheet/common'
-require_dependency 'stylesheet/importer'
-require_dependency 'stylesheet/functions'
+# frozen_string_literal: true
+
+require 'stylesheet/importer'
+require 'stylesheet/functions'
 
 module Stylesheet
 
   class Compiler
+    ASSET_ROOT = "#{Rails.root}/app/assets/stylesheets" unless defined? ASSET_ROOT
 
-    def self.error_as_css(error, label)
-      error = error.message
-      error.gsub!("\n", '\A ')
-      error.gsub!("'", '\27 ')
+    def self.compile_asset(asset, options = {})
+      importer = Importer.new(options)
+      file = importer.prepended_scss
 
-      "footer { white-space: pre; }
-      footer:after { content: '#{error}' }"
-    end
-
-    def self.compile_asset(asset, options={})
-
-      if Importer.special_imports[asset.to_s]
-        filename = "theme.scss"
-        file = "@import \"theme_variables\"; @import \"#{asset}\";"
+      if Importer::THEME_TARGETS.include?(asset.to_s)
+        filename = "theme_#{options[:theme_id]}.scss"
+        file += options[:theme_variables].to_s
+        file += importer.theme_import(asset)
+      elsif plugin_assets = Importer.plugin_assets[asset.to_s]
+        filename = "#{asset.to_s}.scss"
+        options[:load_paths] = [] if options[:load_paths].nil?
+        plugin_assets.each do |src|
+          file += File.read src
+          options[:load_paths] << File.expand_path(File.dirname(src))
+        end
       else
         filename = "#{asset}.scss"
         path = "#{ASSET_ROOT}/#{filename}"
-        file = File.read path
+        file += File.read path
+
+        case asset.to_s
+        when "desktop", "mobile"
+          file += importer.category_backgrounds
+          file += importer.font
+        when "embed", "publish"
+          file += importer.font
+        when "wizard"
+          file += importer.wizard_fonts
+        when Stylesheet::Manager::COLOR_SCHEME_STYLESHEET
+          file += importer.import_color_definitions
+          file += importer.import_wcag_overrides
+        end
       end
 
-      compile(file,filename,options)
-
+      compile(file, filename, options)
     end
 
-    def self.compile(stylesheet, filename, options={})
-      source_map_file = options[:source_map_file] || "#{filename.sub(".scss","")}.css.map";
+    def self.compile(stylesheet, filename, options = {})
+      source_map_file = options[:source_map_file] || "#{filename.sub(".scss", "")}.css.map"
+
+      load_paths = [ASSET_ROOT]
+      load_paths += options[:load_paths] if options[:load_paths]
 
       engine = SassC::Engine.new(stylesheet,
-                                 importer: Importer,
                                  filename: filename,
                                  style: :compressed,
                                  source_map_file: source_map_file,
@@ -42,8 +59,8 @@ module Stylesheet
                                  theme_id: options[:theme_id],
                                  theme: options[:theme],
                                  theme_field: options[:theme_field],
-                                 load_paths: [ASSET_ROOT])
-
+                                 color_scheme_id: options[:color_scheme_id],
+                                 load_paths: load_paths)
 
       result = engine.render
 
